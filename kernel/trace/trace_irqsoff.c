@@ -612,7 +612,7 @@ void tracer_hardirqs_on(unsigned long a0, unsigned long a1)
 {
 	unsigned int pc = preempt_count();
 
-	if (!preempt_trace(pc) && irq_trace())
+	if (ipipe_root_p && !preempt_trace(pc) && irq_trace())
 		stop_critical_timing(a0, a1, pc);
 }
 
@@ -620,7 +620,7 @@ void tracer_hardirqs_off(unsigned long a0, unsigned long a1)
 {
 	unsigned int pc = preempt_count();
 
-	if (!preempt_trace(pc) && irq_trace())
+	if (ipipe_root_p && !preempt_trace(pc) && irq_trace())
 		start_critical_timing(a0, a1, pc);
 }
 
