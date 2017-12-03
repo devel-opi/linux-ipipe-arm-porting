@@ -30,6 +30,39 @@
 
 #ifdef CONFIG_MMU
 
+#ifdef CONFIG_IPIPE
+
+static inline unsigned long ipipe_fault_entry(void)
+{
+	unsigned long flags;
+	int s;
+
+	flags = hard_local_irq_save();
+	s = __test_and_set_bit(IPIPE_STALL_FLAG, &__ipipe_root_status);
+	hard_local_irq_enable();
+
+	return arch_mangle_irq_bits(s, flags);
+}
+
+static inline void ipipe_fault_exit(unsigned long x)
+{
+	if (!arch_demangle_irq_bits(&x))
+		local_irq_enable();
+	else
+		hard_local_irq_restore(x);
+}
+
+#else
+
+static inline unsigned long ipipe_fault_entry(void)
+{
+	return 0;
+}
+
+static inline void ipipe_fault_exit(unsigned long x) { }
+
+#endif
+
 #ifdef CONFIG_KPROBES
 static inline int notify_page_fault(struct pt_regs *regs, unsigned int fsr)
 {
@@ -259,9 +292,15 @@ do_page_fault(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 	int sig, code;
 	vm_fault_t fault;
 	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE;
+	unsigned long irqflags;
+
+	if (__ipipe_report_trap(IPIPE_TRAP_ACCESS, regs))
+		return 0;
+
+	irqflags = ipipe_fault_entry();
 
 	if (notify_page_fault(regs, fsr))
-		return 0;
+		goto out;
 
 	tsk = current;
 	mm  = tsk->mm;
@@ -315,7 +354,7 @@ retry:
 	if ((fault & VM_FAULT_RETRY) && fatal_signal_pending(current)) {
 		if (!user_mode(regs))
 			goto no_context;
-		return 0;
+		goto out;
 	}
 
 	/*
@@ -350,7 +389,7 @@ retry:
 	 * Handle the "normal" case first - VM_FAULT_MAJOR
 	 */
 	if (likely(!(fault & (VM_FAULT_ERROR | VM_FAULT_BADMAP | VM_FAULT_BADACCESS))))
-		return 0;
+		goto out;
 
 	/*
 	 * If we are in kernel mode at this point, we
@@ -366,7 +405,7 @@ retry:
 		 * got oom-killed)
 		 */
 		pagefault_out_of_memory();
-		return 0;
+		goto out;
 	}
 
 	if (fault & VM_FAULT_SIGBUS) {
@@ -387,10 +426,13 @@ retry:
 	}
 
 	__do_user_fault(tsk, addr, fsr, sig, code, regs);
-	return 0;
+	goto out;
 
 no_context:
 	__do_kernel_fault(mm, addr, fsr, regs);
+out:
+	ipipe_fault_exit(irqflags);
+
 	return 0;
 }
 #else					/* CONFIG_MMU */
@@ -423,10 +465,13 @@ static int __kprobes
 do_translation_fault(unsigned long addr, unsigned int fsr,
 		     struct pt_regs *regs)
 {
+	unsigned long irqflags;
 	unsigned int index;
 	pgd_t *pgd, *pgd_k;
 	pud_t *pud, *pud_k;
 	pmd_t *pmd, *pmd_k;
+
+	IPIPE_BUG_ON(!hard_irqs_disabled());
 
 	if (addr < TASK_SIZE)
 		return do_page_fault(addr, fsr, regs);
@@ -478,7 +523,15 @@ do_translation_fault(unsigned long addr, unsigned int fsr,
 	return 0;
 
 bad_area:
+	if (__ipipe_report_trap(IPIPE_TRAP_ACCESS, regs))
+		return 0;
+
+	irqflags = ipipe_fault_entry();
+
 	do_bad_area(addr, fsr, regs);
+
+	ipipe_fault_exit(irqflags);
+
 	return 0;
 }
 #else					/* CONFIG_MMU */
@@ -498,7 +551,17 @@ do_translation_fault(unsigned long addr, unsigned int fsr,
 static int
 do_sect_fault(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 {
+	unsigned long irqflags;
+
+	if (__ipipe_report_trap(IPIPE_TRAP_SECTION, regs))
+		return 0;
+
+	irqflags = ipipe_fault_entry();
+
 	do_bad_area(addr, fsr, regs);
+
+	ipipe_fault_exit(irqflags);
+
 	return 0;
 }
 #endif /* CONFIG_ARM_LPAE */
@@ -509,6 +572,9 @@ do_sect_fault(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 static int
 do_bad(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 {
+	if (__ipipe_report_trap(IPIPE_TRAP_DABT,regs))
+		return 0;
+
 	return 1;
 }
 
@@ -546,9 +612,15 @@ asmlinkage void
 do_DataAbort(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 {
 	const struct fsr_info *inf = fsr_info + fsr_fs(fsr);
+	unsigned long irqflags;
 
 	if (!inf->fn(addr, fsr & ~FSR_LNX_PF, regs))
 		return;
+
+	if (__ipipe_report_trap(IPIPE_TRAP_UNKNOWN, regs))
+		return;
+
+	irqflags = ipipe_fault_entry();
 
 	pr_alert("Unhandled fault: %s (0x%03x) at 0x%08lx\n",
 		inf->name, fsr, addr);
@@ -556,6 +628,8 @@ do_DataAbort(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 
 	arm_notify_die("", regs, inf->sig, inf->code, (void __user *)addr,
 		       fsr, 0);
+
+	ipipe_fault_exit(irqflags);
 }
 
 void __init
@@ -575,15 +649,23 @@ asmlinkage void
 do_PrefetchAbort(unsigned long addr, unsigned int ifsr, struct pt_regs *regs)
 {
 	const struct fsr_info *inf = ifsr_info + fsr_fs(ifsr);
+	unsigned long irqflags;
 
 	if (!inf->fn(addr, ifsr | FSR_LNX_PF, regs))
 		return;
+
+	if (__ipipe_report_trap(IPIPE_TRAP_UNKNOWN, regs))
+		return;
+
+	irqflags = ipipe_fault_entry();
 
 	pr_alert("Unhandled prefetch abort: %s (0x%03x) at 0x%08lx\n",
 		inf->name, ifsr, addr);
 
 	arm_notify_die("", regs, inf->sig, inf->code, (void __user *)addr,
 		       ifsr, 0);
+
+	ipipe_fault_exit(irqflags);
 }
 
 /*
