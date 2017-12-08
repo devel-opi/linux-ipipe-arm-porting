@@ -27,6 +27,7 @@
 #include <linux/of_device.h>
 #include <linux/gpio/driver.h>
 #include <linux/bitops.h>
+#include <linux/ipipe.h>
 #include <linux/platform_data/gpio-omap.h>
 
 #define OMAP4_GPIO_DEBOUNCINGTIME_MASK 0xFF
@@ -66,7 +67,11 @@ struct gpio_bank {
 	u32 saved_datain;
 	u32 level_mask;
 	u32 toggle_mask;
+#ifdef CONFIG_IPIPE
+	ipipe_spinlock_t lock;
+#else
 	raw_spinlock_t lock;
+#endif
 	raw_spinlock_t wa_lock;
 	struct gpio_chip chip;
 	struct clk *dbck;
@@ -728,22 +733,17 @@ static void omap_gpio_free(struct gpio_chip *chip, unsigned offset)
  * line's interrupt handler has been run, we may miss some nested
  * interrupts.
  */
-static irqreturn_t omap_gpio_irq_handler(int irq, void *gpiobank)
+static void __omap_gpio_irq_handler(struct gpio_bank *bank)
 {
 	void __iomem *isr_reg = NULL;
 	u32 enabled, isr, level_mask;
 	unsigned int bit;
-	struct gpio_bank *bank = gpiobank;
 	unsigned long wa_lock_flags;
 	unsigned long lock_flags;
 
 	isr_reg = bank->base + bank->regs->irqstatus;
 	if (WARN_ON(!isr_reg))
-		goto exit;
-
-	if (WARN_ONCE(!pm_runtime_active(bank->chip.parent),
-		      "gpio irq%i while runtime suspended?\n", irq))
-		return IRQ_NONE;
+		return;
 
 	while (1) {
 		raw_spin_lock_irqsave(&bank->lock, lock_flags);
@@ -786,16 +786,37 @@ static irqreturn_t omap_gpio_irq_handler(int irq, void *gpiobank)
 
 			raw_spin_lock_irqsave(&bank->wa_lock, wa_lock_flags);
 
-			generic_handle_irq(irq_find_mapping(bank->chip.irq.domain,
-							    bit));
+			ipipe_handle_demuxed_irq(irq_find_mapping(bank->chip.irqdomain,
+							    	  bit));
 
 			raw_spin_unlock_irqrestore(&bank->wa_lock,
 						   wa_lock_flags);
 		}
 	}
-exit:
+}
+
+#ifdef CONFIG_IPIPE
+
+static void omap_gpio_irq_handler(struct irq_desc *d)
+{
+	struct gpio_bank *bank = irq_desc_get_handler_data(d);
+	__omap_gpio_irq_handler(bank);
+}
+
+#else
+
+static irqreturn_t omap_gpio_irq_handler(int irq, void *gpiobank)
+{
+	struct gpio_bank *bank = gpiobank;
+
+	pm_runtime_get_sync(bank->chip.parent);
+	__omap_gpio_irq_handler(bank);
+	pm_runtime_put(bank->chip.parent);
+
 	return IRQ_HANDLED;
 }
+
+#endif
 
 static unsigned int omap_gpio_irq_startup(struct irq_data *d)
 {
@@ -869,6 +890,19 @@ static void omap_gpio_mask_irq(struct irq_data *d)
 	raw_spin_lock_irqsave(&bank->lock, flags);
 	omap_set_gpio_irqenable(bank, offset, 0);
 	omap_set_gpio_triggering(bank, offset, IRQ_TYPE_NONE);
+	raw_spin_unlock_irqrestore(&bank->lock, flags);
+}
+
+static void omap_gpio_mask_ack_irq(struct irq_data *d)
+{
+	struct gpio_bank *bank = omap_irq_data_get_bank(d);
+	unsigned offset = d->hwirq;
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&bank->lock, flags);
+	omap_set_gpio_irqenable(bank, offset, 0);
+	omap_set_gpio_triggering(bank, offset, IRQ_TYPE_NONE);
+	omap_clear_gpio_irqstatus(bank, offset);
 	raw_spin_unlock_irqrestore(&bank->lock, flags);
 }
 
@@ -1239,11 +1273,16 @@ static int omap_gpio_chip_init(struct gpio_bank *bank, struct irq_chip *irqc)
 		return ret;
 	}
 
+#ifdef CONFIG_IPIPE
+	irq_set_chained_handler_and_data(bank->irq,
+					 omap_gpio_irq_handler, bank);
+#else
 	ret = devm_request_irq(bank->chip.parent, bank->irq,
 			       omap_gpio_irq_handler,
 			       0, dev_name(bank->chip.parent), bank);
 	if (ret)
 		gpiochip_remove(&bank->chip);
+#endif
 
 	if (!bank->is_mpuio)
 		gpio += bank->width;
@@ -1312,13 +1351,14 @@ static int omap_gpio_probe(struct platform_device *pdev)
 	irqc->irq_shutdown = omap_gpio_irq_shutdown,
 	irqc->irq_ack = omap_gpio_ack_irq,
 	irqc->irq_mask = omap_gpio_mask_irq,
+	irqc->irq_mask_ack = omap_gpio_mask_ack_irq,
 	irqc->irq_unmask = omap_gpio_unmask_irq,
 	irqc->irq_set_type = omap_gpio_irq_type,
 	irqc->irq_set_wake = omap_gpio_wake_enable,
 	irqc->irq_bus_lock = omap_gpio_irq_bus_lock,
 	irqc->irq_bus_sync_unlock = gpio_irq_bus_sync_unlock,
 	irqc->name = dev_name(&pdev->dev);
-	irqc->flags = IRQCHIP_MASK_ON_SUSPEND;
+	irqc->flags = IRQCHIP_MASK_ON_SUSPEND | IRQCHIP_PIPELINE_SAFE;
 	irqc->parent_device = dev;
 
 	bank->irq = platform_get_irq(pdev, 0);
