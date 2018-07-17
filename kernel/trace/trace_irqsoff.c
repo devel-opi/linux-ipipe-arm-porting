@@ -456,6 +456,12 @@ void stop_critical_timings(void)
 }
 EXPORT_SYMBOL_GPL(stop_critical_timings);
 
+__visible void trace_hardirqs_on_virt_caller(unsigned long caller_addr)
+{
+	if (ipipe_root_p && !raw_irqs_disabled())
+		trace_hardirqs_on_caller(caller_addr);
+}
+
 #ifdef CONFIG_FUNCTION_TRACER
 static bool function_enabled;
 
