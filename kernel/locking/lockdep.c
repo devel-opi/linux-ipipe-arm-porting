@@ -2815,6 +2815,17 @@ void lockdep_hardirqs_on(unsigned long ip)
 	current->lockdep_recursion = 0;
 }
 
+__visible void trace_hardirqs_on_virt_caller(unsigned long ip)
+{
+	/*
+	 * The IRQ tracing logic only applies to the root domain, and
+	 * must consider the virtual disable flag exclusively when
+	 * leaving an interrupt/fault context.
+	 */
+	if (ipipe_root_p && !raw_irqs_disabled())
+		trace_hardirqs_on_caller(ip);
+}
+
 /*
  * Hardirqs were disabled:
  */
