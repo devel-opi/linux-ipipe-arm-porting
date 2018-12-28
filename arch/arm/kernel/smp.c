@@ -655,7 +655,7 @@ void ipipe_send_ipi(unsigned ipi, cpumask_t cpumask)
 EXPORT_SYMBOL_GPL(ipipe_send_ipi);
 
  /* hw IRQs off */
-asmlinkage void __exception __ipipe_grab_ipi(unsigned svc, struct pt_regs *regs)
+asmlinkage void __exception_irq_entry __ipipe_grab_ipi(unsigned svc, struct pt_regs *regs)
 {
 	int virq = IPIPE_IPI_BASE + svc;
 
