@@ -276,7 +276,7 @@ void __ipipe_exit_irq(struct pt_regs *regs)
 
 void printascii(const char *s);
 /* hw irqs off */
-asmlinkage void __exception __ipipe_grab_irq(int irq, struct pt_regs *regs)
+asmlinkage void __exception_irq_entry __ipipe_grab_irq(int irq, struct pt_regs *regs)
 {
 	struct ipipe_percpu_data *p = __ipipe_raw_cpu_ptr(&ipipe_percpu);
 
