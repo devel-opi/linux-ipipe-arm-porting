@@ -916,14 +916,14 @@ ENDPROC(__switch_to)
 	emulation code.
 */
 	.globl	__ipipe_tsc_area
-	.equ	__ipipe_tsc_area, CONFIG_VECTORS_BASE + 0x1000 + __ipipe_tsc_area_start - __kuser_helper_end
+	.equ	__ipipe_tsc_area, VECTORS_BASE + 0x1000 + __ipipe_tsc_area_start - __kuser_helper_end
 
 #ifdef CONFIG_IPIPE_ARM_KUSER_TSC
 	.globl  __ipipe_tsc_addr
-	.equ	__ipipe_tsc_addr, CONFIG_VECTORS_BASE + 0x1000 + .LCcntr_addr - __kuser_helper_end
+	.equ	__ipipe_tsc_addr, VECTORS_BASE + 0x1000 + .LCcntr_addr - __kuser_helper_end
 
 	.globl	__ipipe_tsc_get
-	.equ	__ipipe_tsc_get, CONFIG_VECTORS_BASE + 0x1000 + __ipipe_kuser_get_tsc - __kuser_helper_end
+	.equ	__ipipe_tsc_get, VECTORS_BASE + 0x1000 + __ipipe_kuser_get_tsc - __kuser_helper_end
 #endif
 
 	.align 5

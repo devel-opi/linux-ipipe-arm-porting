@@ -41,11 +41,12 @@ unsigned long __ipipe_kuser_tsc_freq;
 
 struct ipipe_tsc_value_t *ipipe_tsc_value;
 static struct timer_list ipipe_tsc_update_timer;
+static unsigned long timer_data;
 
-static void __ipipe_tsc_update_fn(unsigned long cookie)
+static void __ipipe_tsc_update_fn(struct timer_list *list)
 {
 	__ipipe_tsc_update();
-	ipipe_tsc_update_timer.expires += cookie;
+	ipipe_tsc_update_timer.expires += timer_data;
 	add_timer(&ipipe_tsc_update_timer);
 }
 
@@ -159,7 +160,7 @@ void __init __ipipe_tsc_register(struct __ipipe_tscinfo *info)
 		wrap_ms);
 
 	if (!registered) {
-		init_timer(&ipipe_tsc_update_timer);
+		timer_setup(&ipipe_tsc_update_timer, __ipipe_tsc_update_fn, 0);
 		clocksource_register_hz(&clksrc, tsc_info.freq);
 	} else
 		__clocksource_update_freq_hz(&clksrc, tsc_info.freq);
@@ -168,10 +169,9 @@ void __init __ipipe_tsc_register(struct __ipipe_tscinfo *info)
 	do_div(wrap_ms, 1000);
 	if (wrap_ms > 0x7fffffff)
 		wrap_ms = 0x7fffffff;
-	ipipe_tsc_update_timer.data = wrap_ms;
-	ipipe_tsc_update_timer.function = __ipipe_tsc_update_fn;
+	timer_data = wrap_ms;
 	mod_timer(&ipipe_tsc_update_timer,
-		jiffies + ipipe_tsc_update_timer.data);
+		jiffies + timer_data);
 
 	__ipipe_tracer_hrclock_initialized();
 }
