@@ -786,7 +786,7 @@ static void __omap_gpio_irq_handler(struct gpio_bank *bank)
 
 			raw_spin_lock_irqsave(&bank->wa_lock, wa_lock_flags);
 
-			ipipe_handle_demuxed_irq(irq_find_mapping(bank->chip.irqdomain,
+			ipipe_handle_demuxed_irq(irq_find_mapping(bank->chip.irq.domain,
 							    	  bit));
 
 			raw_spin_unlock_irqrestore(&bank->wa_lock,
