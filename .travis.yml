@@ -19,8 +19,6 @@ before_script:
   - export MYHOME=$PWD
 
 script:
-  # Check coding style
-  - git format-patch -1 --stdout | ./scripts/checkpatch.pl --ignore FILE_PATH_CHANGES --ignore GERRIT_CHANGE_ID -
 
   # arm32 compilation
   - export ARCH=arm
