@@ -1446,7 +1446,7 @@ config ARCH_NR_GPIO
 
 	  If unsure, leave the default value.
 
-source kernel/ipipe/Kconfig
+source "kernel/ipipe/Kconfig"
 
 config HZ_FIXED
 	int
